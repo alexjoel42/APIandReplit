@@ -8,6 +8,7 @@ from opentrons_hardware.sensors.utils import (
     PollSensorInformation,
     WriteSensorInformation,
     SensorDataType,
+    SensorThresholdInformation,
 )
 
 from .scheduler import SensorScheduler
@@ -95,7 +96,7 @@ class PressureSensor(AbstractAdvancedSensor):
         timeout: int = 1,
     ) -> Optional[SensorDataType]:
         """Send the zero threshold which the offset value is compared to."""
-        write = WriteSensorInformation(self._sensor_type, node_id, threshold)
+        write = SensorThresholdInformation(self._sensor_type, node_id, threshold)
         scheduler = SensorScheduler()
         threshold_data = await scheduler.send_threshold(write, can_messenger, timeout)
         if threshold_data:

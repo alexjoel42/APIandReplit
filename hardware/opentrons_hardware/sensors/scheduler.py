@@ -1,10 +1,12 @@
 """Sensor driver message scheduler."""
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 
-from typing import Optional
+from typing import Optional, Type, TypeVar, Callable, AsyncIterator
 
-from opentrons_hardware.firmware_bindings import NodeId
+from opentrons_hardware.firmware_bindings.constants import NodeId, SensorOutputBinding
+
 from opentrons_hardware.drivers.can_bus.can_messenger import (
     CanMessenger,
     WaitableCallback,
@@ -17,20 +19,29 @@ from opentrons_hardware.firmware_bindings.messages.message_definitions import (
     BaselineSensorRequest,
     SensorThresholdResponse,
     ReadFromSensorResponse,
+    BindSensorOutputRequest,
+    BindSensorOutputResponse,
 )
+from opentrons_hardware.firmware_bindings.messages.messages import MessageDefinition
 from opentrons_hardware.firmware_bindings.messages.payloads import (
     ReadFromSensorRequestPayload,
     SetSensorThresholdRequestPayload,
     WriteToSensorRequestPayload,
     BaselineSensorRequestPayload,
+    BindSensorOutputRequestPayload,
 )
-from opentrons_hardware.firmware_bindings.messages.fields import SensorTypeField
+from opentrons_hardware.firmware_bindings.messages.fields import (
+    SensorTypeField,
+    SensorOutputBindingField,
+)
 
 from opentrons_hardware.sensors.utils import (
     ReadSensorInformation,
     SensorDataType,
     WriteSensorInformation,
     PollSensorInformation,
+    SensorThresholdInformation,
+    SensorInformation,
 )
 from opentrons_hardware.firmware_bindings.utils import (
     UInt8Field,
@@ -41,6 +52,7 @@ from opentrons_hardware.firmware_bindings.utils import (
 
 
 log = logging.getLogger(__name__)
+ResponseType = TypeVar("ResponseType", bound=MessageDefinition)
 
 
 class SensorScheduler:
@@ -62,8 +74,15 @@ class SensorScheduler:
                 ),
             )
             try:
+
+                def _format(message: ReadFromSensorResponse) -> SensorDataType:
+                    return SensorDataType.build(message.payload.sensor_data)
+
                 data = await asyncio.wait_for(
-                    self._wait_for_response(sensor.node_id, reader), timeout
+                    self._wait_for_response(
+                        sensor.node_id, reader, ReadFromSensorResponse, _format
+                    ),
+                    timeout,
                 )
             except asyncio.TimeoutError:
                 log.warning("Sensor poll timed out")
@@ -102,8 +121,15 @@ class SensorScheduler:
                 ),
             )
             try:
+
+                def _format(response: ReadFromSensorResponse) -> SensorDataType:
+                    return SensorDataType.build(response.payload.sensor_data)
+
                 data = await asyncio.wait_for(
-                    self._wait_for_response(sensor.node_id, reader), timeout
+                    self._wait_for_response(
+                        sensor.node_id, reader, ReadFromSensorResponse, _format
+                    ),
+                    timeout,
                 )
             except asyncio.TimeoutError:
                 log.warning("Sensor Read timed out")
@@ -111,7 +137,10 @@ class SensorScheduler:
                 return data
 
     async def send_threshold(
-        self, sensor: WriteSensorInformation, can_messenger: CanMessenger, timeout: int
+        self,
+        sensor: SensorThresholdInformation,
+        can_messenger: CanMessenger,
+        timeout: float = 1.0,
     ) -> Optional[SensorDataType]:
         """Send threshold message."""
         with WaitableCallback(can_messenger) as reader:
@@ -121,13 +150,22 @@ class SensorScheduler:
                 message=SetSensorThresholdRequest(
                     payload=SetSensorThresholdRequestPayload(
                         sensor=SensorTypeField(sensor.sensor_type),
-                        threshold=Int32Field(sensor.data.to_int),
+                        threshold=Int32Field(
+                            0 if sensor.data == "auto" else sensor.data.to_int
+                        ),
                     )
                 ),
             )
             try:
+
+                def _format(response: SensorThresholdResponse) -> SensorDataType:
+                    return SensorDataType.build(response.payload.threshold)
+
                 data = await asyncio.wait_for(
-                    self._wait_for_response(sensor.node_id, reader), timeout
+                    self._wait_for_response(
+                        sensor.node_id, reader, SensorThresholdResponse, _format
+                    ),
+                    timeout,
                 )
             except asyncio.TimeoutError:
                 log.warning("Sensor Read timed out")
@@ -136,13 +174,66 @@ class SensorScheduler:
 
     @staticmethod
     async def _wait_for_response(
-        node_id: NodeId, reader: WaitableCallback
+        node_id: NodeId,
+        reader: WaitableCallback,
+        response_def: Type[ResponseType],
+        response_handler: Callable[[ResponseType], Optional[SensorDataType]],
     ) -> Optional[SensorDataType]:
         """Listener for receiving messages back."""
         async for response, arbitration_id in reader:
             if arbitration_id.parts.originating_node_id == node_id:
-                if isinstance(response, ReadFromSensorResponse):
-                    return SensorDataType.build(response.payload.sensor_data)
-                elif isinstance(response, SensorThresholdResponse):
-                    return SensorDataType.build(response.payload.threshold)
+                if isinstance(response, response_def):
+                    return response_handler(response)
         return None
+
+    @asynccontextmanager
+    async def bind_sync(
+        self,
+        target_sensor: SensorInformation,
+        can_messenger: CanMessenger,
+        timeout: float = 0.5,
+    ) -> AsyncIterator[None]:
+        """While acquired, bind the specified sensor to control sync."""
+        with WaitableCallback(can_messenger) as completion_reader:
+            await can_messenger.send(
+                node_id=target_sensor.node_id,
+                message=BindSensorOutputRequest(
+                    payload=BindSensorOutputRequestPayload(
+                        sensor=SensorTypeField(target_sensor.sensor_type),
+                        binding=SensorOutputBindingField(SensorOutputBinding.sync),
+                    )
+                ),
+            )
+            try:
+
+                def _format(response: BindSensorOutputResponse) -> None:
+                    return None
+
+                await asyncio.wait_for(
+                    self._wait_for_response(
+                        target_sensor.node_id,
+                        completion_reader,
+                        BindSensorOutputResponse,
+                        _format,
+                    ),
+                    timeout,
+                )
+            finally:
+                log.exception(
+                    f"Failed to bind {target_sensor.sensor_type} on "
+                    f"{target_sensor.node_id}"
+                )
+        try:
+            yield
+        finally:
+            await can_messenger.send(
+                node_id=target_sensor.node_id,
+                message=BindSensorOutputRequest(
+                    payload=BindSensorOutputRequestPayload(
+                        sensor=SensorTypeField(target_sensor.sensor_type),
+                        binding=SensorOutputBindingField(
+                            SensorOutputBinding.none.value
+                        ),
+                    )
+                ),
+            )

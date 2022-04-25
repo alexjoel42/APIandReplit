@@ -73,6 +73,7 @@ MessageDefinition = Union[
     defs.BindSensorOutputRequest,
     defs.TipActionRequest,
     defs.TipActionResponse,
+    defs.BindSensorOutputResponse,
 ]
 
 
