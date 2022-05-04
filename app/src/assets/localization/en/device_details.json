@@ -4,7 +4,6 @@
   "offline_pipettes_and_modules": "Robot must be on the network to see pipettes and modules",
   "offline_recent_protocol_runs": "Robot must be on the network to see protocol runs",
   "pipettes_and_modules": "Pipettes and Modules",
-  "recent_protocol_runs": "Recent Protocol Runs",
   "run_a_protocol": "Run a Protocol",
   "usb_port": "usb port {{port}}",
   "usb_hub": "usb port {{port}} via hub",
@@ -91,5 +90,14 @@
   "deck_cal_missing": "Pipette Offset calibration missing. Calibrate deck first.",
   "an_error_occurred_while_updating_please_try_again": "An error occurred while updating your pipette's settings. Please try again.",
   "deck_slot": "deck slot {{slot}}",
-  "robot_control_not_available": "Some robot controls are not available when run is in progress"
+  "robot_control_not_available": "Some robot controls are not available when run is in progress",
+  "recent_protocol_runs": "{{robotName}}'s Protocol Runs",
+  "run_id": "Run ID",
+  "protocol": "Protocol",
+  "status": "Status",
+  "run_duration": "Run duration",
+  "view_run_record": "View protocol run record",
+  "rerun_now": "Rerun protocol now",
+  "delete_run": "Delete protocol run record",
+  "no_protocol_runs": "No protocol runs yet!"
 }
