@@ -23,7 +23,6 @@ def filter_func(arb: ArbitrationId) -> bool:
     return bool(arb.parts.message_id == ReadFromEEPromResponse.message_id)
 
 
-# @pytest.mark.skip("eeprom simulator is broken")
 @pytest.mark.requires_emulator
 @pytest.mark.can_filter_func.with_args(filter_func)
 async def test_read_write(
